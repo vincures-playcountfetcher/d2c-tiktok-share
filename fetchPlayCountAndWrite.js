@@ -1,10 +1,10 @@
-// fetchPlayCountAndWrite.js — ヘッダーは文字列、100行チャンク版
+// fetchshareCountAndWrite.js — ヘッダーは文字列、100行チャンク版
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const axios = require('axios');
 
 // ===== 設定 =====
-const SHEET_ID   = '1vm6JyX8a8Bt5FX4xE6CGgtRUYMh7gXzHhPAxnEooH_8';
-const SHEET_NAME = 'Vin計測ツール';
+const SHEET_ID   = '1wVFefWuElsq7krWpZjTVcerYOHX7SeBTQujVXI7bdXk';
+const SHEET_NAME = '投稿シェア回数データ';
 const CHUNK_SIZE = 100;        // 100行ごとに処理
 // =================
 
@@ -33,7 +33,7 @@ function getJstTodayStrings() {
   return { md, ymd, iso };
 }
 
-async function fetchPlayCount(url) {
+async function fetchshareCount(url) {
   try {
     const res = await axios.get(url, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -41,7 +41,7 @@ async function fetchPlayCount(url) {
       maxContentLength: 20 * 1024 * 1024, // 20MBガード
     });
     const html = res.data;
-    const match = html.match(/["']?playCount["']?\s*[:=]\s*(\d+)/i);
+    const match = html.match(/["']?shareCount["']?\s*[:=]\s*(\d+)/i);
     const n = match ? Number(match[1]) : 0;
     return Number.isFinite(n) ? n : 0;
   } catch (err) {
@@ -79,7 +79,7 @@ async function fetchPlayCount(url) {
   for (let col = 1; col < colCount; col++) {
     const c = sheet.getCell(0, col);
     const raw  = (c.value ?? '').toString().trim();
-    const disp = (c.displayValue ?? '').toString().trim();
+    const disp = (c.disshareValue ?? '').toString().trim();
     if ([raw, disp].some(v => v === md || v === ymd || v === iso)) {
       targetCol = col;
       break;
@@ -127,19 +127,19 @@ async function fetchPlayCount(url) {
       const outCell = sheet.getCell(r, targetCol); // 今日の列
       const url     = (urlCell.value || '').toString().trim();
 
-      let playCount = 0;
+      let shareCount = 0;
       if (url && url.startsWith('http') && url.includes('tiktok.com')) {
-        playCount = await fetchPlayCount(url);
+        shareCount = await fetchshareCount(url);
       } else {
-        playCount = 0; // 無効URL/空白は 0 記録
+        shareCount = 0; // 無効URL/空白は 0 記録
       }
 
-      if (!Number.isFinite(playCount)) playCount = 0;
+      if (!Number.isFinite(shareCount)) shareCount = 0;
 
-      outCell.value = playCount; // 数値で書く
+      outCell.value = shareCount; // 数値で書く
       outCell.numberFormat = { type: 'NUMBER', pattern: '0' };
       wrote++;
-      console.log(`✅ 行${r + 1} → ${playCount}`);
+      console.log(`✅ 行${r + 1} → ${shareCount}`);
     }
 
     await sheet.saveUpdatedCells();
