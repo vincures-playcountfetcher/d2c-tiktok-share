@@ -1,4 +1,4 @@
-// fetchshareCountAndWrite.js — ヘッダーは文字列、100行チャンク版
+// fetchshareCountAndWrite.js — C列URLを対象にシェア回数取得して記録
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const axios = require('axios');
 
@@ -19,7 +19,6 @@ function columnToLetter(col) {
 }
 
 function getJstTodayStrings() {
-  // JSTの今日。ヘッダーは単純に "M/D" の文字列で書く
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset() * 60000;
   const jst = new Date(utc + 9 * 3600000);
@@ -27,23 +26,26 @@ function getJstTodayStrings() {
   const m = jst.getMonth() + 1;
   const d = jst.getDate();
 
-  const md  = `${m}/${d}`;                         // 例: "8/22"
-  const ymd = `${y}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`; // 例: "2025/08/22"
-  const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`; // 例: "2025-08-22"
+  const md  = `${m}/${d}`;
+  const ymd = `${y}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`;
+  const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
   return { md, ymd, iso };
 }
 
-async function fetchshareCount(url) {
+async function fetchShareCount(url) {
   try {
     const res = await axios.get(url, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
       timeout: 15000,
-      maxContentLength: 20 * 1024 * 1024, // 20MBガード
+      maxContentLength: 20 * 1024 * 1024,
     });
     const html = res.data;
+
+    // 🔍 shareCount の直後の数値を取得
     const match = html.match(/["']?shareCount["']?\s*[:=]\s*(\d+)/i);
     const n = match ? Number(match[1]) : 0;
     return Number.isFinite(n) ? n : 0;
+
   } catch (err) {
     console.error(`❌ ${url}: ${err.message}`);
     return 0;
@@ -51,7 +53,6 @@ async function fetchshareCount(url) {
 }
 
 (async () => {
-  // 認証（環境変数 GOOGLE_CREDS_BASE64 を想定）
   const creds = JSON.parse(
     Buffer.from(process.env.GOOGLE_CREDS_BASE64, 'base64').toString('utf-8')
   );
@@ -69,30 +70,26 @@ async function fetchshareCount(url) {
   const rowCount = sheet.rowCount;
   const colCount = sheet.columnCount;
 
-  // 1) ヘッダー1行だけ読み込む（軽量）
   await sheet.loadCells(`A1:${columnToLetter(colCount)}1`);
-
   const { md, ymd, iso } = getJstTodayStrings();
 
-  // 2) 今日の列（targetCol）を探す（A列=URLは除外、B列=1から検索）
   let targetCol = null;
   for (let col = 1; col < colCount; col++) {
     const c = sheet.getCell(0, col);
     const raw  = (c.value ?? '').toString().trim();
-    const disp = (c.disshareValue ?? '').toString().trim();
+    const disp = (c.displayValue ?? '').toString().trim();
     if ([raw, disp].some(v => v === md || v === ymd || v === iso)) {
       targetCol = col;
       break;
     }
   }
 
-  // 3) なければ最初の空き列に "M/D" 文字列で作成（形式指定なし）
   if (targetCol === null) {
     for (let col = 1; col < colCount; col++) {
       const c = sheet.getCell(0, col);
       const hasVal = c.value !== null && c.value !== undefined && c.value !== '';
       if (!hasVal) {
-        c.value = md; // ただの文字列でOK（後でGASが整形する想定）
+        c.value = md;
         targetCol = col;
         break;
       }
@@ -101,49 +98,45 @@ async function fetchshareCount(url) {
       console.error('❌ 空き列がありません（列数を増やしてください）');
       process.exit(1);
     }
-    await sheet.saveUpdatedCells(); // ヘッダー書き込みを反映
+    await sheet.saveUpdatedCells();
   }
 
   const targetColLetter = columnToLetter(targetCol + 1);
-  console.log(`🗓  書き込み先ヘッダー列: ${targetColLetter} (index=${targetCol})`);
+  console.log(`🗓 書き込み先ヘッダー列: ${targetColLetter} (index=${targetCol})`);
 
-  // 4) 本体は100行ずつ、A列と書き込み列だけ読み書き
+  // === 💡 C列（インデックス2）をURL列として処理 ===
+  const URL_COL_INDEX = 2;
+
   for (let startRow = 1; startRow < rowCount; startRow += CHUNK_SIZE) {
     const endRow = Math.min(rowCount - 1, startRow + CHUNK_SIZE - 1);
+    const startA1 = startRow + 1;
+    const endA1   = endRow + 1;
 
-    const aStart = startRow + 1; // A1基準に変換
-    const aEnd   = endRow + 1;
-
-    const urlRange = `A${aStart}:A${aEnd}`;
-    const outRange = `${targetColLetter}${aStart}:${targetColLetter}${aEnd}`;
+    const urlRange = `${columnToLetter(URL_COL_INDEX + 1)}${startA1}:${columnToLetter(URL_COL_INDEX + 1)}${endA1}`;
+    const outRange = `${targetColLetter}${startA1}:${targetColLetter}${endA1}`;
 
     await sheet.loadCells(urlRange);
     await sheet.loadCells(outRange);
 
     let wrote = 0;
-
     for (let r = startRow; r <= endRow; r++) {
-      const urlCell = sheet.getCell(r, 0);         // A列（URL）
-      const outCell = sheet.getCell(r, targetCol); // 今日の列
+      const urlCell = sheet.getCell(r, URL_COL_INDEX);
+      const outCell = sheet.getCell(r, targetCol);
       const url     = (urlCell.value || '').toString().trim();
 
       let shareCount = 0;
       if (url && url.startsWith('http') && url.includes('tiktok.com')) {
-        shareCount = await fetchshareCount(url);
-      } else {
-        shareCount = 0; // 無効URL/空白は 0 記録
+        shareCount = await fetchShareCount(url);
       }
 
-      if (!Number.isFinite(shareCount)) shareCount = 0;
-
-      outCell.value = shareCount; // 数値で書く
+      outCell.value = shareCount;
       outCell.numberFormat = { type: 'NUMBER', pattern: '0' };
       wrote++;
-      console.log(`✅ 行${r + 1} → ${shareCount}`);
+      console.log(`✅ 行${r + 1}: ${shareCount}`);
     }
 
     await sheet.saveUpdatedCells();
-    console.log(`💾 保存: 行${aStart}-${aEnd}（${wrote}件更新）`);
+    console.log(`💾 保存: 行${startA1}-${endA1}（${wrote}件更新）`);
   }
 
   console.log('🎉 完了');
