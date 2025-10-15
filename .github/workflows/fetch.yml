@@ -1,0 +1,26 @@
+name: Fetch Play Count
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 23 * * *'  # JST 8:00 = UTC 23:00（毎日）
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run script
+        run: node fetchPlayCountAndWrite.js
